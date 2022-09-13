@@ -1,332 +1,188 @@
+using ExitGames.Client.Photon;
 using Photon.Pun;
+using Photon.Realtime;
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
-public class TurnSystem : MonoBehaviourPunCallbacks
+public class TurnSystem : MonoBehaviour, IOnEventCallback
 {
     [SerializeField] private Croupier croupier;
+    [SerializeField] private CardUI turnCard;
 
-    [SerializeField] private GameObject cardPoolWindow;
-    [SerializeField] private Button buttonThrow;
-    [SerializeField] private CardUI panelTurnCard;
-
-    public delegate void ConfirmEndTurnHandler(int player, Card[] cards);
-    public event ConfirmEndTurnHandler ConfirmEndTurnHandlerEvent;
-
-    public delegate void ToggleCardPoolWindowHandler(bool toggle);
-    public event ToggleCardPoolWindowHandler ToggleCardPoolWindowHandlerEvent;
-
-    public delegate void UpdateTurnHandler(int turn);
-    public event UpdateTurnHandler UpdateTurnHandlerEvent;
-
-    private Camera mainCamera;
-    private Card[] clickedCard;
+    private int[] currentAttackCards = new int[4]; 
+    private RaiseEventOptions options;
+    private SendOptions sendOptions;
+    private int playersCount;
     private int currentTurn;
-    public TurnType turnType;
-    public CardUI turnCard;
+    private int turnCardID;
 
-    public List<Card> turnPool;
-
-    private void Start()
+    public void OnEvent(EventData photonEvent)
     {
-        mainCamera = Camera.main;
-        clickedCard = new Card[4];
-    }
-
-    private void Update()
-    {
-        if (Input.GetMouseButtonDown(0))
+        switch (photonEvent.Code)
         {
-            ClickToCard();
-        }
-    }
-
-    public void ClickToTurnTypeAttack()
-    {
-        SetTurnType(TurnType.Attack);
-
-        AddCardsToTurnPool(clickedCard);
-    }
-
-    public void ClickToTurnTypeDefence()
-    {
-        SetTurnType(TurnType.Defence);
-    }
-
-    public void ClickToButtonThrow()
-    {
-        switch (turnType)
-        {
-            case TurnType.First:
-                ToggleCardPoolWindowHandlerEvent?.Invoke(true);
+            case Core.EVENT_END_TURN_ATTACK:
+                object[] turnDataAttack = (object[])photonEvent.CustomData;
+                GetTurnData((int)turnDataAttack[0], (int[])turnDataAttack[1], (int)turnDataAttack[2], (int)turnDataAttack[3], (int)turnDataAttack[4]);
                 break;
 
-            case TurnType.Attack:
-                SetTurnCard(turnCard);
+            case Core.EVENT_END_TURN_DEFENCE:
+                object[] turnDataDefence = (object[])photonEvent.CustomData;
+                GetTurnData((int)turnDataDefence[0], (int[])turnDataDefence[1], (int)turnDataDefence[2], (int)turnDataDefence[3], (int)turnDataDefence[4]);
                 break;
         }
     }
 
-    private void ClickToCard()
+    private void Awake()
     {
-        Vector2 cursor = mainCamera.ScreenToWorldPoint(Input.mousePosition);
-
-        RaycastHit2D hit = Physics2D.Raycast(cursor, Vector2.zero, Mathf.Infinity, Core.layerMaskCard);
-
-        if (hit)
+        if (PhotonNetwork.IsMasterClient)
         {
-            hit.collider.gameObject.TryGetComponent<Card>(out Card card);
-            hit.collider.gameObject.TryGetComponent<CardUI>(out CardUI cardUI);
+            options = new RaiseEventOptions { Receivers = ReceiverGroup.All };
+            sendOptions = new SendOptions { Reliability = true };
+            playersCount = PhotonNetwork.PlayerList.Length;
+            StartCoroutine(DelayedUpdateTurn(2.0f));
+        }
 
-            if (card != null)
-            {
-                if (turnType == TurnType.Defence)
-                {
-                    StartCoroutine(AnimationShowCard(card));
-                    return;
-                }
+    }
 
-                PickCardsForDrop(hit.collider.gameObject);
-                UpdateButtonThrow();
-                return;
-            }
-            
-            if (cardUI != null)
-            {
-                turnCard = cardUI;
-                SetTurnCard(cardUI);
-                return;
-            }
+    private void OnEnable()
+    {
+        if (PhotonNetwork.IsMasterClient)
+        {
+            PhotonNetwork.NetworkingClient.EventReceived += OnEvent;
         }
     }
 
-    private void SetTurnCard(CardUI cardUI)
+    private void OnDisable()
     {
-        Core.layerMaskCard = 1 << 0;
-
-        ToggleTurnCard(cardUI, true);
-        ConfirmEndTurnHandlerEvent?.Invoke(currentTurn, clickedCard);
-        HideThrowedCards(clickedCard);
-
-        for (int i = 0; i < clickedCard.Length; i++)
+        if (PhotonNetwork.IsMasterClient)
         {
-            if (clickedCard[i] != null)
+            PhotonNetwork.NetworkingClient.EventReceived += OnEvent;
+        }
+    }
+
+    private IEnumerator DelayedUpdateTurn(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        UpdateTurn(0, 0);
+    }
+
+    private void UpdateTurn(int type, int step)
+    {
+        currentTurn += step;
+
+        if (currentTurn > playersCount - 1)
+        {
+            currentTurn = 0;
+        }
+
+        if (currentTurn < 0)
+        {
+            currentTurn = playersCount - 1;
+        }
+
+        object[] data = new object[] { currentTurn, type };
+
+        PhotonNetwork.RaiseEvent(Core.EVENT_UPDATE_TURN, data, options, sendOptions);
+    }
+
+
+    private void GetTurnData(int sender, int[] sentCards, int sentTurnCard, int openCardValue, int openCardID)
+    {
+        int currentPlayer = sender;
+        int previousPlayer;
+
+        if (sender - 1 < 0) { previousPlayer = playersCount - 1; }
+        else { previousPlayer = sender - 1; }
+
+        if (sentCards != null)
+        {
+            SetSentAttackCards(sentCards);
+            RemoveSentAttackCardsFromSender(currentPlayer, sentCards);
+        }
+
+        if (sentTurnCard > -1)
+        {
+            UpdateAndSendToPlayersTurnCard(sentTurnCard);
+        }
+
+        if (openCardValue > -1)
+        {
+            if (turnCardID == openCardValue)
             {
-                int id = clickedCard[i].id;
-                Card photonCard = croupier.PhotonCards[id];
+                AddTurnPoolCardsToPlayer(currentPlayer, openCardValue, openCardID);
+                StartCoroutine(OpenCardAnimation(3.0f, 0, 1));
+            }
+
+            else
+            {
+                AddTurnPoolCardsToPlayer(previousPlayer, openCardValue, openCardID);
+                StartCoroutine(OpenCardAnimation(3.0f, 0, 0));
+            }
+            return;
+        }
+
+        UpdateTurn(1, 1);
+    }
+
+
+
+    private void SetSentAttackCards(int[] attackCards)
+    {
+        for (int i = 0; i < currentAttackCards.Length; i++)
+        {
+            if (currentAttackCards[i] != 0)
+            {
+                AttackCardsMoveToHeap(currentAttackCards);
+                break;
+            }
+        }
+
+        for (int i = 0; i < attackCards.Length; i++)
+        {
+            currentAttackCards[i] = attackCards[i];
+
+            if (attackCards[i] != 0)
+            {
+                GameObject photonCard = croupier.PhotonCard[attackCards[i]];
+                photonCard.gameObject.GetComponent<PhotonView>().RPC("TogglePhotonObject", RpcTarget.AllViaServer, true);
+                photonCard.gameObject.GetComponent<PhotonView>().RPC("HideCard", RpcTarget.AllViaServer);
                 photonCard.gameObject.transform.rotation = Quaternion.identity;
-                photonCard.gameObject.SetActive(true);
-                photonCard.gameObject.transform.position = new Vector2(i * 1.2f - 2.4f, 0);
-                photonCard.HideCard();
-                AddCardsToTurnPool(clickedCard);
+                photonCard.gameObject.transform.position = new Vector2(i * 1.2f - 2.0f, 0);
             }
         }
 
-        UpdateButtonThrow();
-        ToggleCardPoolWindowHandlerEvent?.Invoke(false);
-        UpdateTurn(1);
+        PhotonNetwork.RaiseEvent(Core.EVENT_ADD_CARDS_TO_TURN_POOL, attackCards, options, sendOptions);
     }
 
-    private void AddCardsToTurnPool(Card[] cards)
+    private void AttackCardsMoveToHeap(int[] attackCards)
     {
-        for (int i = 0; i < cards.Length; i++)
-        {
-            if (cards[i] != null)
-            {
-                AddAndMoveClickedCardToTurnPool(cards);
-                clickedCard = new Card[4];
-                return;
-            }
-        }
+        PhotonNetwork.RaiseEvent(Core.EVENT_CARDS_MOVE_TO_HEAP, attackCards, options, sendOptions);
     }
 
-    private void ToggleTurnCard(CardUI cardUI, bool toggle)
+    private void AddTurnPoolCardsToPlayer(int player, int openedCard, int openedCardID)
     {
-        if (toggle)
-        {
-            panelTurnCard.SetCardValue(cardUI.id, cardUI.value, cardUI.suit, cardUI.spriteSuit, cardUI.spriteValue, false);
-            panelTurnCard.gameObject.SetActive(toggle);
-            panelTurnCard.RefreshSprites();
-            return;
-        }
-
-        panelTurnCard.gameObject.SetActive(toggle);
+        object[] data = { player, openedCard, openedCardID };
+        PhotonNetwork.RaiseEvent(Core.EVENT_ADD_TURN_POOL_CARDS_FOR_PLAYER, data, options, sendOptions);
     }
 
-    private void PickCardsForDrop(GameObject go)
+    private void RemoveSentAttackCardsFromSender(int player, int[] cards)
     {
-        go.TryGetComponent<Card>(out Card card);
-
-        if (card == null)
-            return;
-
-        for (int i = 0; i < clickedCard.Length; i++)
-        {
-            if (card == clickedCard[i])
-            {
-                clickedCard[i] = null;
-                ToggleVisibleClickedCard(card, false);
-                return;
-            }
-        }
-
-        for (int i = 0; i < clickedCard.Length; i++)
-        {
-            if (clickedCard[i] == null)
-            {
-                clickedCard[i] = card;
-                ToggleVisibleClickedCard(card, true);
-                return;
-            }
-        }
+        object[] removedCards = new object[] { player, cards };
+        PhotonNetwork.RaiseEvent(Core.EVENT_REMOVE_SENT_CARD_FROM_SENDER, removedCards, options, sendOptions);
     }
 
-    private void UpdateButtonThrow()
+    private void UpdateAndSendToPlayersTurnCard(int cardID)
     {
-        int count = 0;
+        turnCardID = cardID;
 
-        for (int i = 0; i < clickedCard.Length; i++)
-        {
-            if (clickedCard[i] != null)
-            {
-                count++;
-            }
-        }
-
-        if (count > 0)
-        {
-            buttonThrow.interactable = true;
-            return;
-        }
-
-        buttonThrow.interactable = false;
+        object data = (int)turnCardID;
+        PhotonNetwork.RaiseEvent(Core.EVENT_UPDATE_AND_SEND_TURN_CARD, data, options, sendOptions);
     }
 
-    private void ToggleVisibleClickedCard(Card card, bool toggle)
+    private IEnumerator OpenCardAnimation(float delay, int type, int step)
     {
-        Transform transform = card.gameObject.transform;
-
-        if (toggle)
-        {
-            transform.position = new Vector2(transform.position.x, transform.position.y + 0.5f);
-            return;
-        } 
-
-        transform.position = new Vector2(transform.position.x, transform.position.y - 0.5f);
-    }
-
-    private void HideThrowedCards(Card[] cards)
-    {
-        for (int i = 0; i < cards.Length; i++)
-        {
-            if (cards[i] != null)
-            {
-                ToggleVisibleClickedCard(cards[i], false);
-                cards[i].gameObject.SetActive(false);
-            }
-        }
-    }
-
-    private void SetTurnType(TurnType type)
-    {
-        switch (type)
-        {
-            case TurnType.First:
-                Core.layerMaskCard = 1 << 8;
-                break;
-
-            case TurnType.Attack:
-                Core.layerMaskCard = 1 << 8;
-                break;
-
-            case TurnType.Defence:
-                Core.layerMaskCard = 1 << 9;
-                break;
-        }
-
-        turnType = type;
-    }
-
-    private void TakeAllCardInPool(Card card)
-    {
-        AddCardsToTurnPool(clickedCard);
-
-        if (card.value == turnCard.value)
-        {
-            for (int i = 0; i < turnPool.Count; i++)
-            {
-                int id = turnPool[i].id;
-                croupier.AddPlayerCard(currentTurn, turnPool[i]);
-                croupier.PhotonCards[id].gameObject.SetActive(false);
-            }
-
-            turnPool = new List<Card>();
-
-            UpdateTurn(1);
-            return;
-        }
-
-        for (int i = 0; i < turnPool.Count; i++)
-        {
-            int player = currentTurn - 1;
-
-            if (player < 0)
-            {
-                player = Core.playersCount - 1;
-            }
-            croupier.AddPlayerCard(player, turnPool[i]);
-
-            int id = turnPool[i].id;
-            croupier.PhotonCards[id].gameObject.SetActive(false);
-        }
-
-        turnPool = new List<Card>();
-        SetTurnType(TurnType.First);
-        UpdateTurn(0);
-    }
-
-    private void AddAndMoveClickedCardToTurnPool(Card[] cards)
-    {
-        foreach (Card card in cards)
-        {
-            if (card != null)
-            {
-                int id = card.id;
-                turnPool.Add(card);
-                card.gameObject.SetActive(false);
-
-                croupier.PhotonCards[id].gameObject.transform.position = new Vector2(Random.Range(5.5f, 6.5f), Random.Range(-0.5f, 0.5f));
-                croupier.PhotonCards[id].gameObject.transform.rotation = Quaternion.Euler(0, 0, Random.Range(-30, 30));
-                croupier.PhotonCards[id].HideCard();
-            }
-        }
-    }
-
-    private void UpdateTurn(int add)
-    {
-        int turn = currentTurn + add;
-
-        if (turn >= Core.playersCount)
-        {
-            turn = 0;
-        }
-
-        if (turn < 0)
-        {
-            turn = Core.playersCount - 1;
-        }
-
-        currentTurn = turn;
-        UpdateTurnHandlerEvent?.Invoke(turn);
-        Debug.Log("Current turn: Player " + turn);
-    }
-
-    private IEnumerator AnimationShowCard(Card card)
-    {
-        card.ShowCard();
-        yield return new WaitForSeconds(2.0f);
-        TakeAllCardInPool(card);
+        yield return new WaitForSeconds(delay);
+        UpdateAndSendToPlayersTurnCard(-1);
+        UpdateTurn(type, step);
     }
 }

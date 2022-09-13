@@ -1,41 +1,79 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class GameUI : MonoBehaviour
 {
-    [SerializeField] private TurnSystem turnSystem;
-
+    [SerializeField] private PlayerTurn playerTurn;
     [SerializeField] private GameObject cardPoolWindow;
-    [SerializeField] private GameObject panelTurnType;
+    [SerializeField] private GameObject panelTurnTypeButtons;
+    [SerializeField] private Button buttonThrow;
+    [SerializeField] private Button buttonAttack;
+    [SerializeField] private Button buttonDefence;
+    [SerializeField] private Text textWinnerName;
+    [SerializeField] private GameObject canvasGame;
+    [SerializeField] private GameObject canvasEndGame;
 
     private void Start()
     {
-        turnSystem.ToggleCardPoolWindowHandlerEvent += ShowCardPoolWindow;
-        turnSystem.ConfirmEndTurnHandlerEvent += TogglePanelTurnType;
+        playerTurn.ShowCardPoolWindowHandlerEvent += ShowCardPoolWindow;
+        playerTurn.ToggleButtonThrowHandlerEvent += UpdateButtonThrow;
+        playerTurn.TogglePanelTurnTypeButtonsHandlerEvent += TogglePanelTurnType;
+        playerTurn.TogglePanelEndGameHandlerEvent += ShowEndGame;
     }
 
-    public void HidePanelTurnType()
+    public void TogglePanelTurnType(bool toggle, bool btnAttack, bool btnDefence)
     {
-        panelTurnType.SetActive(false);
-    }
-
-    private void TogglePanelTurnType(int player, Card[] cards)
-    {
-        panelTurnType.SetActive(true);
-        Core.layerMaskCard = 1 << 0;
-    }
-
-    private void ShowCardPoolWindow(bool toggle)
-    {
-        cardPoolWindow.SetActive(toggle);
-
         if (toggle)
         {
-            Core.layerMaskCard = 1 << 5;
+            PlayerTurn.layerMaskCard = 1 << 5;
+        }
+
+        panelTurnTypeButtons.SetActive(toggle);
+        buttonAttack.interactable = btnAttack;
+        buttonDefence.interactable = btnDefence;
+    }
+
+    public void TogglePanelTurnTypeForButton(bool toggle)
+    {
+        panelTurnTypeButtons.SetActive(toggle);
+    }
+
+    private void UpdateButtonThrow(bool toggle)
+    {
+        buttonThrow.interactable = toggle;
+    }
+
+    private void ShowCardPoolWindow(bool toggle, bool[] pool)
+    {
+        if (toggle)
+        {
+            PlayerTurn.layerMaskCard = 1 << 5;
+            cardPoolWindow.SetActive(true);
+
+            for (int i = 0; i < playerTurn.CardsPool.Length; i++)
+            {
+                playerTurn.CardsPool[i].RefreshSprites();
+
+                if (pool[i])
+                {
+                    playerTurn.CardsPool[i].EnableCard();
+                    continue;
+                }
+
+                playerTurn.CardsPool[i].DisableCard();
+            }
             return;
         }
 
-        Core.layerMaskCard = 1 << 0;
+        cardPoolWindow.SetActive(false);
+    }
+
+    private void ShowEndGame(string winnerName)
+    {
+        canvasGame.SetActive(false);
+        canvasEndGame.SetActive(true);
+        textWinnerName.text = winnerName;
     }
 }

@@ -27,7 +27,7 @@ public class CardUI : GameCard
         SetCardSprites();
     }
 
-    public void SetCardValue(int id, int value, int suit, Sprite spriteSuit, Sprite spriteValue, bool color)
+    public void SetCardValue(int id, int value, int suit, int spriteSuit, int spriteValue)
     {
         _id = id;
         _value = value;
@@ -44,31 +44,13 @@ public class CardUI : GameCard
     public void EnableCard()
     {
         boxCollider.enabled = true;
-
-        for (int i = 1; i < image.Length; i++)
-        {
-            Color color = image[i].color;
-            image[i].color = new Color(color.r, color.g, color.b, 50);
-        }
+        image[0].color = new Color(1, 1, 1, 1);
     }
 
     public void DisableCard()
     {
         boxCollider.enabled = false;
-
-        for (int i = 1; i < image.Length; i++)
-        {
-            Color color = image[i].color;
-            image[i].color = new Color(color.r, color.g, color.b, 255);
-        }
-    }
-
-    private void SetCardColor(Color color)
-    {
-        for (int i = 1; i < image.Length; i++)
-        {
-            image[i].color = color;
-        }
+        image[0].color = new Color(0.5f, 0.5f, 0.5f, 0.5f);
     }
 
     private void SetCardSprites()
@@ -77,11 +59,11 @@ public class CardUI : GameCard
         {
             if (i % 2 != 0)
             {
-                image[i].sprite = _spriteSuit;
+                image[i].sprite = sprites[13];
                 continue;
             }
 
-            image[i].sprite = _spriteValue;
+            image[i].sprite = sprites[spriteValue];
         }
     }
 }

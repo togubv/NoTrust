@@ -1,145 +1,118 @@
+using ExitGames.Client.Photon;
 using Photon.Pun;
+using Photon.Realtime;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Croupier : MonoBehaviour
+public class Croupier : MonoBehaviour, IOnEventCallback
 {
     [SerializeField] private TurnSystem turnSystem;
 
-    [SerializeField] private Card prefabCard;
-    [SerializeField] private CardUI prefabCardUI;
-    [SerializeField] private Card prefabCardTurn;
-    [SerializeField] private Sprite[] spriteValue;
-    [SerializeField] private Sprite[] spriteSuit;
-    [SerializeField] private Transform cardsPoolUI;
+    public GameObject[] PhotonCard => photonCard;
 
-    public List<Card> cards;
-    public List<PlayerCards> playerCards;
-    public List<CardUI> cardsPool;
-    public List<Card> photonCards;
+    private int turnCardID;
+    private List<int> turnPool = new List<int>();
+    private RaiseEventOptions options;
+    private SendOptions sendOptions;
+    private PlayerCards[] playerCards;
+    private bool[] currentPool = new bool[12];
+    private GameObject[] photonCard = new GameObject[53];
 
-    public List<Card> PhotonCards => photonCards;
-
-    private void Start()
+    public void OnEvent(EventData photonEvent)
     {
-        turnSystem.ConfirmEndTurnHandlerEvent += ThrowCards;
-        turnSystem.UpdateTurnHandlerEvent += SortCardForAllPlayers;
-
-        SetSprites();
-        GenerateCards();
-        GenerateCardsPool();
-        DistributeCard(Core.playersCount);
-        SortCardForAllPlayers(0);
-    }
-
-    public void RemovePlayerCard(int player, Card card)
-    {
-        if (playerCards[player].cards.Contains(card))
+        switch (photonEvent.Code)
         {
-            playerCards[player].cards.Remove(card);
+            case Core.EVENT_CARDS_MOVE_TO_HEAP:
+                MoveToHeapCards((int[])photonEvent.CustomData);
+                break;
+
+            case Core.EVENT_ADD_TURN_POOL_CARDS_FOR_PLAYER:
+                StartCoroutine(OpenTurnCardAnimation((object[])photonEvent.CustomData, 3.0f));
+                break;
+
+            case Core.EVENT_REMOVE_SENT_CARD_FROM_SENDER:
+                object[] removedCards = (object[])photonEvent.CustomData;
+                RemovePlayerCards((int)removedCards[0], (int[])removedCards[1]);
+                SendPlayersCards();
+                break;
+
+            case Core.EVENT_ADD_CARDS_TO_TURN_POOL:
+                AddCardsToTurnPool((int[])photonEvent.CustomData);
+                break;
+
+            case Core.EVENT_REMOVE_SET_FROM_PLAYER:
+                object[] setData = (object[])photonEvent.CustomData;
+                RemovePlayerCards((int)setData[0], (int[])setData[1]);
+                UpdateAndSendToPlayersCardsPool((int[])setData[2]);
+                SendPlayersCards();
+                break;
         }
-
-       //SortCardForPlayer(player);
     }
 
-    public void AddPlayerCard(int player, Card card)
+    private void Awake()
     {
-        playerCards[player].cards.Add(card);
-        //SortCardForPlayer(player);
-    }
-
-    private void ThrowCards(int player, Card[] cards)
-    {
-        for (int i = 0; i < cards.Length; i++)
+        if (PhotonNetwork.IsMasterClient)
         {
-            if (cards[i] != null)
+            options = new RaiseEventOptions { Receivers = ReceiverGroup.All };
+            sendOptions = new SendOptions { Reliability = true };
+
+            playerCards = new PlayerCards[PhotonNetwork.PlayerList.Length];
+
+            for (int i = 0; i < playerCards.Length; i++)
             {
-                RemovePlayerCard(player, cards[i]);
+                playerCards[i] = new PlayerCards(new List<int>());
             }
-        }
 
-        //SortCardForPlayer(player);
-    }
-
-    private void SetSprites()
-    {
-        Sprite[] sprites = Resources.LoadAll<Sprite>("Sprites/Card");
-
-        spriteSuit = new Sprite[4];
-        spriteValue = new Sprite[sprites.Length - 4];
-
-        for (int i = 0; i < 13; i++)
-        {
-            spriteValue[i] = sprites[i];
-        }
-
-        for (int i = 0; i < 4; i++)
-        {
-            spriteSuit[i] = sprites[i + spriteValue.Length];
+            StartCoroutine(DelayedGenerate(1.0f));
         }
     }
 
-    private void GenerateCards()
+    private IEnumerator DelayedGenerate(float delay)
     {
-        GameObject goCards = new GameObject("Cards");
-        GameObject photonObjects = new GameObject("Photon Objects");
-        for (int i = 0; i < 13; i++)
+        yield return new WaitForSeconds(delay);
+
+        GeneratePoolCards();
+        UpdateAndSendToPlayersCardsPool(null);
+        DistributeCard();
+        GeneratePhotonCards();
+        SendPlayersCards();
+    }
+
+    private void OnEnable()
+    {
+        if (PhotonNetwork.IsMasterClient)
         {
-            for (int j = 0; j < 4; j++)
+            PhotonNetwork.NetworkingClient.EventReceived += OnEvent;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (PhotonNetwork.IsMasterClient)
+        {
+            PhotonNetwork.NetworkingClient.EventReceived += OnEvent;
+        }
+    }
+
+    private void DistributeCard()
+    {
+        List<int> pool = new List<int>();
+
+        for (int i = 1; i <= 52; i++)
+        {
+            pool.Add(i);
+        }
+
+        while (pool.Count > 0)
+        {
+            for (int i = 0; i < PhotonNetwork.PlayerList.Length; i++)
             {
-                Card card = Instantiate(prefabCard, goCards.transform);
-                cards.Add(card);
+                int randomCard = UnityEngine.Random.Range(0, pool.Count);
+                playerCards[i].cards.Add(pool[randomCard]);
+                pool.RemoveAt(randomCard);
 
-                Vector2 position = new Vector2(0, 0);
-                Card photonCard = Instantiate(prefabCardTurn, position, Quaternion.identity, photonObjects.transform);  // PHOTON
-                photonCards.Add(photonCard);
-                photonCard.gameObject.SetActive(false);
-
-                if (j < 2)
-                {
-                    card.SetCardValue(i * 4 + j, i, j, spriteSuit[j], spriteValue[i], false);
-
-                    photonCard.SetCardValue(i * 4 + j, i, j, spriteSuit[j], spriteValue[i], false);
-                    continue;
-                }
-
-                card.SetCardValue(i * 4 + j, i, j, spriteSuit[j], spriteValue[i], true);
-
-                photonCard.SetCardValue(i * 4 + j, i, j, spriteSuit[j], spriteValue[i], false);
-                continue;
-            }
-        }
-    }
-
-    private void GenerateCardsPool()
-    {
-        for (int i = 0; i < 12; i++)
-        {
-            CardUI card = Instantiate(prefabCardUI, cardsPoolUI);
-            cardsPool.Add(card);
-
-            card.SetCardValue(i, i, 0, spriteSuit[0], spriteValue[i], false);
-        }
-    }
-
-    private void DistributeCard(int count)
-    {
-        for (int i = 0; i < count; i++)
-        {
-            playerCards.Add(new PlayerCards());
-            playerCards[i].cards = new List<Card>();
-        }
-
-        while (cards.Count > 0)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                int randomCard = Random.Range(0, Random.Range(0, cards.Count));
-                playerCards[i].cards.Add(cards[randomCard]);
-                cards.RemoveAt(randomCard);
-
-                if (cards.Count < 1)
+                if (pool.Count < 1)
                 {
                     return;
                 }
@@ -147,46 +120,154 @@ public class Croupier : MonoBehaviour
         }
     }
 
-    private void SortCardForPlayer(int player)
+    private void GeneratePoolCards()
     {
-        for (int i = playerCards[player].cards.Count - 1; i > -1; i--)
+        for (int i = 0; i < currentPool.Length; i++)
         {
-            if (playerCards[player].cards[i] == null)
+            currentPool[i] = true;
+        }
+    }
+
+    private void GeneratePhotonCards()
+    {
+        GameObject photonObjects = new GameObject("Photon Objects");
+
+        for (int i = 0; i < 13; i++)
+        {
+            for (int j = 0; j < 4; j++)
             {
-                playerCards[player].cards.RemoveAt(i);
+                Vector2 position = new Vector2(0, 0);
+
+                int id = i * 4 + j + 1;
+                int value = i;
+                int suit = j;
+                int sprSuit = j + 13;
+                int sprValue = i;
+                bool sprColor = (j < 2) ? false : true;
+
+                object[] instantiateData = { id, value, suit, sprSuit, sprValue, sprColor };
+                GameObject card = PhotonNetwork.InstantiateRoomObject("CardPhoton", position, Quaternion.identity, 0, instantiateData);
+                card.transform.SetParent(photonObjects.transform);
+                photonCard[i * 4 + j + 1] = card;
+                card.gameObject.GetComponent<PhotonView>().RPC("TogglePhotonObject", RpcTarget.AllViaServer, false);
+            }
+        }
+    }
+
+    private void SendPlayersCards()
+    {
+        int[] playersCardsCount = new int[playerCards.Length];
+
+        for (int i = 0; i < playersCardsCount.Length; i++)
+        {
+            playersCardsCount[i] = playerCards[i].cards.Count;
+        }
+
+        for (int i = 0; i < playerCards.Length; i++)
+        {
+            int[] convertedCards = playerCards[i].cards.ToArray();
+            object[] data = new object[] { (int)i, (int[])convertedCards, (int[])playersCardsCount };
+            PhotonNetwork.RaiseEvent(Core.EVENT_SEND_PLAYERS_CARD, data, options, sendOptions);
+        }
+    }
+
+    private void UpdateAndSendToPlayersCardsPool(int[] removedCard)
+    {
+        if (removedCard != null)
+        {
+            for (int i = 0; i < removedCard.Length; i++)
+            {
+                currentPool[removedCard[i]] = false;
             }
         }
 
-        float x = ((int)(playerCards[player].cards.Count / 2)) * -0.3f;
-        float y = 0;
-
-        if (player == 0)
-        {
-            y = -4;
-        }
-        else
-        {
-            y = 4;
-        }
-        for (int i = 0; i < playerCards[player].cards.Count; i++)
-        {
-            playerCards[player].cards[i].gameObject.SetActive(true);
-            playerCards[player].cards[i].gameObject.transform.position = new Vector2(x + 0.3f * i, y);
-        }
+        PhotonNetwork.RaiseEvent(Core.EVENT_UPDATE_AND_SEND_CARDS_POOL, currentPool, options, sendOptions);
     }
 
-    private void SortCardForAllPlayers(int turn)
+    private void RemovePlayerCards(int player, int[] cardsID)
     {
-        for (int i = 0; i < Core.playersCount; i++)
+        for (int i = 0; i < cardsID.Length; i++)
         {
-            Debug.Log("SORT PLAYER: " + i);
-            SortCardForPlayer(i);
+            if (playerCards[player].cards.Contains(cardsID[i]))
+            {
+                int id = playerCards[player].cards.IndexOf(cardsID[i]);
+                playerCards[player].cards.RemoveAt(id);
+            }
         }
     }
-}
 
-[System.Serializable]
-public class PlayerCards
-{
-    public List<Card> cards;
+    private void AddPlayerCards(int player, int[] cardsID)
+    {
+        for (int i = 0; i < cardsID.Length; i++)
+        {
+            playerCards[player].cards.Add(cardsID[i]);
+        }
+    }
+
+    private void AddCardsToTurnPool(int[] newCards)
+    {
+        for (int i = 0; i < newCards.Length; i++)
+        {
+            if (newCards[i] != 0)
+            {
+                turnPool.Add(newCards[i]);
+            }
+        }
+    }
+
+    private void AddTurnCardsToPlayer(int player)
+    {
+        playerCards[player].cards.AddRange(turnPool);
+        turnPool = new List<int>();
+    }
+
+    private void PlayerTakeAllPoolCards(object[] data)
+    {
+        int[] newArray = turnPool.ToArray();
+        turnPool = new List<int>();
+        AddPlayerCards((int)data[0], newArray);
+        HideAllPhotonCards();
+
+        for (int i = 0; i < playerCards.Length; i++)
+        {
+            if (playerCards[i].cards.Count < 1)
+            {
+                PhotonNetwork.RaiseEvent(Core.EVENT_END_GAME, i, options, sendOptions);
+                return;
+            }
+        }
+
+        SendPlayersCards();
+    }
+
+    private void MoveToHeapCards(int[] heapCards)
+    {
+        for (int i = 0; i < heapCards.Length; i++)
+        {
+            if (heapCards[i] != 0)
+            {
+                GameObject card = photonCard[heapCards[i]];
+                card.transform.position = new Vector2(UnityEngine.Random.Range(4.0f, 5.5f), UnityEngine.Random.Range(-0.5f, 0.5f));
+                card.transform.rotation = Quaternion.Euler(0, 0, UnityEngine.Random.Range(-30, 30));
+            }
+        }
+    }
+
+    private void HideAllPhotonCards()
+    {
+        for (int i = 1; i < photonCard.Length; i++)
+        {
+            photonCard[i].gameObject.GetComponent<PhotonView>().RPC("TogglePhotonObject", RpcTarget.AllViaServer, false);
+        }
+    }
+
+    private IEnumerator OpenTurnCardAnimation(object[] data, float delay)
+    {
+        PhotonView photon = photonCard[(int)data[2]].gameObject.GetComponent<PhotonView>();
+
+        photon.RPC("ShowCard", RpcTarget.AllViaServer);
+        yield return new WaitForSeconds(delay);
+        photon.RPC("HideCard", RpcTarget.AllViaServer);
+        PlayerTakeAllPoolCards(data);
+    }
 }
