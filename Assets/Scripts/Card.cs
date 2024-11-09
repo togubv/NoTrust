@@ -1,5 +1,7 @@
+using System.Collections;
 using Photon.Pun;
 using UnityEngine;
+using DG.Tweening;
 
 [RequireComponent(typeof(PhotonView))]
 public class Card : GameCard
@@ -70,19 +72,26 @@ public class Card : GameCard
     [PunRPC]
     public void ShowCard()
     {
-        for (int i = 1; i < spriteR.Length; i++)
-        {
-            spriteR[i].enabled = true;
-        }
+        StartCoroutine(RotateCard(spriteR, true));
     }
 
     [PunRPC]
     public void HideCard()
     {
-        for (int i = 1; i < spriteR.Length; i++)
+        StartCoroutine(RotateCard(spriteR, false));
+    }
+
+    private IEnumerator RotateCard(SpriteRenderer[] spriteRs, bool show)
+    {
+        yield return transform.DORotate(new Vector3(0f, 90f, 0f), 1f);
+
+        for (int i = 1; i < spriteRs.Length; i++)
         {
-            spriteR[i].enabled = false;
+            spriteRs[i].enabled = show;
         }
+
+        yield return new WaitForSeconds(1f);
+        yield return transform.DORotate(new Vector3(0f, 0f, 0f), 1f);
     }
 
     private void RefreshSprites()

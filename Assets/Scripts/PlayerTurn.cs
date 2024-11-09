@@ -3,6 +3,7 @@ using Photon.Pun;
 using Photon.Realtime;
 using System.Collections;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -15,6 +16,7 @@ public class PlayerTurn : MonoBehaviour, IOnEventCallback
 
     [SerializeField] private Transform cardsPoolUI;
     [SerializeField] private CardUI turnCardUI;
+    [SerializeField] private TMP_Text playerNameText;
 
     public delegate void ShowCardPoolWindowHandler(bool toggle, bool[] pool);
     public event ShowCardPoolWindowHandler ShowCardPoolWindowHandlerEvent;
@@ -75,6 +77,7 @@ public class PlayerTurn : MonoBehaviour, IOnEventCallback
                 object turnData = photonEvent.CustomData;
 
                 UpdateTurnCard((int)turnData);
+                //playerNameText
 
                 break;
 
